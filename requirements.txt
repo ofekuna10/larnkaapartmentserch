@@ -1,0 +1,7 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Optional, only needed for --engine browser (sites behind bot protection):
+#   pip install playwright && playwright install chromium
+# playwright>=1.44.0

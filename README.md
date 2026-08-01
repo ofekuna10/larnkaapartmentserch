@@ -1,0 +1,140 @@
+# Larnaca apartment-hunting agent
+
+Finds **second-hand (resale) apartments** in central Larnaca — **Livadia,
+Finikoudes and Mackenzie** — that are within a **10-minute drive of the
+coastline** and priced **at least 15% below the local market**.
+
+The agent crawls the main Cyprus property portals, works out a price benchmark
+per neighbourhood in €/m², and reports every listing that sits far enough below
+it, with the caveats a buyer should check before making an offer.
+
+```
+collect (portals) → normalise → de-duplicate → geo-filter → benchmark → deals → report
+```
+
+## Install
+
+```bash
+pip install -r requirements.txt
+
+# Needed only for portals behind bot protection (Bazaraki, home.cy):
+pip install playwright && playwright install chromium
+```
+
+## Run
+
+```bash
+# The default hunt: 3 areas, 4 portals, 10 min from the sea, 15% below market
+python -m larnaca_agent --engine browser
+
+# Wider net: more portals, deeper crawl, a laxer discount bar
+python -m larnaca_agent --engine browser \
+    --sources bazaraki index.cy scala.cy home.cy dom.com.cy buysellcyprus \
+    --max-pages 5 --discount 10
+
+# Keep watch and only report what is new (or newly reduced) since last time
+python -m larnaca_agent --engine browser --watch 360 --only-new
+
+# Machine-readable output
+python -m larnaca_agent --format json --out out/deals.json
+python -m larnaca_agent --format csv  --out out/deals.csv
+
+# Try the pipeline with no network at all, on the bundled synthetic sample
+python -m larnaca_agent --from-file fixtures/sample_listings.json --osrm-url ""
+```
+
+Useful flags: `--areas`, `--max-drive-min`, `--discount`, `--max-pages`,
+`--include-new-builds`, `--dump-listings`, `--no-cache`, `-v`.
+Full list: `python -m larnaca_agent --help`.
+
+## How each requirement is implemented
+
+**Within 10 minutes' drive of the coast** — `geo.py` holds ten sample points
+along the shore from Mackenzie/airport up to Oroklini. For each listing the
+agent takes the shortest drive time to any of them, routed through
+[OSRM](https://project-osrm.org) when reachable (`--osrm-url`, the public demo
+server by default) and otherwise estimated as crow-flight distance × 1.35 detour
+factor at 27 km/h. Listings with coordinates are routed from their own position;
+the rest fall back to the neighbourhood centroid and are flagged in the report.
+
+**Second-hand only** — `normalize.classify_resale` drops off-plan and new-build
+adverts. Construction year wins over marketing language: a 2005 flat advertised
+as "brand new" after a renovation is still resale, while "under construction /
+delivery 2028" is dropped. Where a portal gives no signal at all the listing is
+kept and marked *resale status unverified*, since resale dominates the stock.
+`--include-new-builds` turns the filter off.
+
+**Average price per area** — `analysis.build_benchmarks` computes, per
+neighbourhood, the **median €/m²** plus the P25–P75 band, a 10%-trimmed mean and
+the median asking price. The median is the reference on purpose: a mean is
+dragged around by penthouses and by the very bargains being hunted. An area with
+fewer than 8 comparables is flagged low-confidence; with fewer than 4 it borrows
+the combined benchmark and says so.
+
+**15%+ below market** — `analysis.find_deals` compares each listing's own €/m²
+against its area benchmark and reports everything at or beyond the threshold
+(`--discount`), sorted by discount, with the fair value and the money gap.
+Discounts above 45% get a warning: in Cyprus that usually means share-of-title,
+missing title deeds, or a wrong size in the advert rather than a bargain.
+
+**Portals** — the four requested (`bazaraki`, `index.cy`, `scala.cy`,
+`home.cy`), plus two extras worth running: `dom.com.cy` and `buysellcyprus`.
+
+> Two naming notes: **Scala** is at `scala.cy`, not `scala.com.cy`, and the
+> "home.mc" in the original brief is almost certainly **`home.cy`** — that is
+> the Cyprus portal in that family. Both are set in
+> `larnaca_agent/scrapers/portals.py` and easy to change.
+
+Other portals worth adding later: `remaxcyprus.com`, `propertygallery.com.cy`,
+`cyprus-real.estate`, `landbank.com.cy`, `danos.com.cy` and the bank REO
+platforms (`altamiracyprus.com`, `gogordian.com`), which is where genuinely
+distressed, below-market stock tends to surface.
+
+## Extraction strategy
+
+Portals redesign their markup often, so `scrapers/base.py` tries three layers
+per page, most durable first:
+
+1. **JSON-LD** (`schema.org` `Product` / `Offer`) — emitted for SEO, survives redesigns.
+2. **Embedded app state** — `__NEXT_DATA__`, `window.__NUXT__`.
+3. **CSS selectors** — several candidates per field, first match wins.
+
+A portal class therefore only declares its URLs and selector candidates. If one
+portal breaks, the run continues and logs a warning instead of failing.
+
+The crawler waits 1.5 s between requests to the same host, caches pages under
+`.cache/`, and honours `robots.txt` (`--ignore-robots` exists for sites where
+you have permission; the responsibility for using it is yours). Note that
+scraping may be against a portal's terms of service — check before running at
+volume, and keep the crawl polite.
+
+## Tests
+
+```bash
+python -m pytest tests -q     # 58 tests, no network required
+```
+
+`fixtures/sample_listings.json` is **synthetic** data used by the tests and by
+the offline demo — it is not real listings.
+
+## Known limitation
+
+Benchmarks are built from **asking prices**, not registered sale prices, so they
+measure "cheap relative to what neighbours are asking". For actual transaction
+values, cross-check the Cyprus Land Registry / the Central Bank residential
+price index. The agent also cannot see condition, floor, view, renovation state
+or title-deed status — a 25% discount is a lead to investigate, not a valuation.
+
+---
+
+## בעברית
+
+הסוכן מחפש דירות **יד שנייה** בלרנקה — ליבדיה, פיניקודס ומקנזי — במרחק **עד 10
+דקות נסיעה מקו החוף**, מחשב את **מחיר השוק לכל אזור** (חציון €/מ״ר) ומדווח על כל
+דירה שמתומחרת **15% ומטה מתחת למחיר השוק** באזור שלה.
+
+הרצה: `python -m larnaca_agent --engine browser`
+
+חשוב לדעת: הבנצ'מרק מבוסס על מחירי **בקשה** ולא על עסקאות שנסגרו, והסוכן לא רואה
+מצב תחזוקה, קומה, נוף או מצב טאבו. הנחה של 25% היא **כיוון לבדיקה**, לא הערכת
+שווי. הנחות מעל 45% הן בדרך כלל סימן לבעיה (חלק בטאבו, היעדר שטר בעלות) ולא מציאה.
