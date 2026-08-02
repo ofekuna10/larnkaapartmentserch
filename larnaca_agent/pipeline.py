@@ -38,11 +38,17 @@ class AgentConfig:
     cache_dir: Optional[Path] = Path(".cache")
     respect_robots: bool = True
     include_new_builds: bool = False
+    # Detail pages to fetch per portal for listings whose size is missing.
+    enrich_details: int = 0
 
 
-def collect_listings(config: AgentConfig) -> list[Listing]:
-    """Run every selected scraper and return the raw union of their results."""
+def collect_with_reports(
+    config: AgentConfig,
+) -> tuple[list[Listing], dict[str, dict]]:
+    """Run every selected scraper; return its listings and a per-portal report."""
     listings: list[Listing] = []
+    reports: dict[str, dict] = {}
+
     with Fetcher(
         engine=config.engine,
         cache_dir=config.cache_dir,
@@ -63,9 +69,40 @@ def collect_listings(config: AgentConfig) -> list[Listing]:
                 found = scraper.collect(config.areas)
             except Exception as exc:  # one broken portal must not kill the run
                 log.error("[%s] scraper failed: %s", name, exc)
-                continue
+                scraper.report["errors"].append(str(exc))
+                found = []
+
+            if config.enrich_details:
+                found = _enrich_missing_sizes(scraper, found, config.enrich_details)
+
+            reports[name] = scraper.report
             log.info("[%s] collected %d raw listings", name, len(found))
             listings.extend(found)
+
+    return listings, reports
+
+
+def collect_listings(config: AgentConfig) -> list[Listing]:
+    """Run every selected scraper and return the raw union of their results."""
+    return collect_with_reports(config)[0]
+
+
+def _enrich_missing_sizes(scraper, listings: list[Listing], budget: int) -> list[Listing]:
+    """Fetch detail pages for listings that lack a size, up to ``budget`` pages.
+
+    Without a covered area there is no €/m² and the listing is dropped later, so
+    this converts otherwise-wasted results into usable ones.
+    """
+    spent = 0
+    for listing in listings:
+        if spent >= budget:
+            break
+        if listing.area_sqm is None and listing.price_eur:
+            scraper.enrich_detail(listing)
+            spent += 1
+    if spent:
+        log.info("[%s] fetched %d detail pages for missing sizes", scraper.name, spent)
+        scraper.report["details_fetched"] = spent
     return listings
 
 

@@ -7,12 +7,19 @@ import json
 import logging
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .config import AREAS, DEFAULT_AREAS, THRESHOLDS, Thresholds
 from .geo import DEFAULT_OSRM_URL
-from .pipeline import AgentConfig, collect_listings, load_listings, run
-from .report import render_csv, render_json, render_markdown
+from .pipeline import AgentConfig, collect_with_reports, load_listings, run
+from .report import (
+    render_csv,
+    render_diagnostics,
+    render_json,
+    render_markdown,
+    render_source_table,
+)
 from .scrapers import DEFAULT_SOURCES, REGISTRY
 from .state import SeenStore
 
@@ -76,6 +83,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not filter out new-build / off-plan adverts",
     )
+    parser.add_argument(
+        "--enrich-details",
+        type=int,
+        default=0,
+        metavar="N",
+        help="fetch up to N advert pages per portal to recover a missing size "
+             "(listings without a size cannot be benchmarked)",
+    )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="crawl one page per portal and report what each one returned and "
+             "which extraction layer worked",
+    )
     parser.add_argument("--no-cache", action="store_true", help="bypass the HTTP cache")
     parser.add_argument(
         "--ignore-robots",
@@ -135,14 +156,26 @@ def _config_from_args(args: argparse.Namespace) -> AgentConfig:
         cache_dir=None if args.no_cache else Path(".cache"),
         respect_robots=not args.ignore_robots,
         include_new_builds=args.include_new_builds,
+        enrich_details=args.enrich_details,
     )
 
 
+def _diagnose(config: AgentConfig) -> int:
+    """Crawl a single page per portal and explain what each one did."""
+    config = replace(config, max_pages=1)
+    listings, reports = collect_with_reports(config)
+    print(render_diagnostics(reports, listings))
+    working = sum(1 for report in reports.values() if report.get("listings"))
+    print(f"{working}/{len(reports)} portals returned listings.")
+    return 0 if working else 1
+
+
 def _one_pass(args: argparse.Namespace, config: AgentConfig) -> int:
+    reports: dict[str, dict] = {}
     if args.from_file:
         listings = load_listings(args.from_file)
     else:
-        listings = collect_listings(config)
+        listings, reports = collect_with_reports(config)
 
     if args.dump_listings:
         args.dump_listings.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +198,9 @@ def _one_pass(args: argparse.Namespace, config: AgentConfig) -> int:
         output = render_csv(deals)
     else:
         output = render_markdown(deals, result.summary)
+        table = render_source_table(reports)
+        if table:
+            output += "\n\n" + table
 
     print(output)
     if args.out:
@@ -192,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
     config = _config_from_args(args)
+
+    if args.diagnose:
+        return _diagnose(config)
 
     if not args.watch:
         return _one_pass(args, config)

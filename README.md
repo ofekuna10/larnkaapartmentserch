@@ -78,29 +78,63 @@ Discounts above 45% get a warning: in Cyprus that usually means share-of-title,
 missing title deeds, or a wrong size in the advert rather than a bargain.
 
 **Portals** — the four requested (`bazaraki`, `index.cy`, `scala.cy`,
-`home.cy`), plus two extras worth running: `dom.com.cy` and `buysellcyprus`.
+`home.cy`), plus four extras worth running: `dom.com.cy`, `buysellcyprus`,
+`zyprus` and `offer.com.cy`.
 
 > Two naming notes: **Scala** is at `scala.cy`, not `scala.com.cy`, and the
 > "home.mc" in the original brief is almost certainly **`home.cy`** — that is
 > the Cyprus portal in that family. Both are set in
 > `larnaca_agent/scrapers/portals.py` and easy to change.
 
+Bazaraki's neighbourhood slugs are its own (`larnaka-makenzy`,
+`larnaka-finikoudes`, `livadia-larnakas`), and the crawl also sweeps the
+adjacent central quarters (Chrysopolitissa, Harbor, Skala) plus the whole
+district, letting the geo stage decide what falls inside the ring.
+
 Other portals worth adding later: `remaxcyprus.com`, `propertygallery.com.cy`,
 `cyprus-real.estate`, `landbank.com.cy`, `danos.com.cy` and the bank REO
 platforms (`altamiracyprus.com`, `gogordian.com`), which is where genuinely
 distressed, below-market stock tends to surface.
 
+## When a portal returns nothing
+
+```bash
+python -m larnaca_agent --diagnose --engine browser
+```
+
+Crawls one page per portal and prints a status table plus, per portal, what
+parsed, a sample record, which fields were missing, and the specific next step —
+distinguishing *blocked* (rerun with `--engine browser`) from *unreachable*
+(connectivity) from *loaded but nothing matched* (selectors need updating).
+Every normal run ends with the same status table, so a silently dead portal is
+visible instead of quietly counted as "no results".
+
+If listings parse but get dropped for having no size, recover them from their
+advert pages:
+
+```bash
+python -m larnaca_agent --engine browser --enrich-details 25
+```
+
 ## Extraction strategy
 
-Portals redesign their markup often, so `scrapers/base.py` tries three layers
-per page, most durable first:
+Portals redesign their markup often, so `scrapers/base.py` tries four layers per
+page, most durable first:
 
 1. **JSON-LD** (`schema.org` `Product` / `Offer`) — emitted for SEO, survives redesigns.
 2. **Embedded app state** — `__NEXT_DATA__`, `window.__NUXT__`.
 3. **CSS selectors** — several candidates per field, first match wins.
+4. **Automatic card detection** — if the declared selectors match nothing, the
+   card element is *inferred*: find the nodes holding a price, walk up to the
+   nearest ancestor that also owns a link, and keep the largest group sharing a
+   tag/class signature. A redesign then costs a warning, not a dead scraper.
 
 A portal class therefore only declares its URLs and selector candidates. If one
 portal breaks, the run continues and logs a warning instead of failing.
+
+`--engine browser` runs Chromium with a realistic viewport, locale and timezone,
+dismisses the cookie banner, and scrolls to trigger lazy-loaded results — which
+is what most of these portals need before they render anything.
 
 The crawler waits 1.5 s between requests to the same host, caches pages under
 `.cache/`, and honours `robots.txt` (`--ignore-robots` exists for sites where
@@ -111,7 +145,7 @@ volume, and keep the crawl polite.
 ## Tests
 
 ```bash
-python -m pytest tests -q     # 58 tests, no network required
+python -m pytest tests -q     # 76 tests, no network required
 ```
 
 `fixtures/sample_listings.json` is **synthetic** data used by the tests and by

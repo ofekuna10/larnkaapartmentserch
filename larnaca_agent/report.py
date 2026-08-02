@@ -100,6 +100,94 @@ def render_markdown(deals: Sequence[Deal], summary: dict, *, title: str = "") ->
     return "\n".join(lines)
 
 
+def render_source_table(reports: dict[str, dict]) -> str:
+    """Per-portal outcome, so a silent portal is visible instead of assumed empty."""
+    if not reports:
+        return ""
+
+    lines = ["### Portal status", "", "| Portal | Pages ok | Listings | Extractor | Status |",
+             "|---|---:|---:|---|---|"]
+    for name, report in reports.items():
+        extractors = report.get("extractors") or {}
+        extractor = ", ".join(f"{k} ({v})" for k, v in extractors.items()) or "—"
+        if report.get("blocked"):
+            status = "🔴 blocked — needs `--engine browser`"
+        elif report.get("unreachable"):
+            status = "🔴 network unreachable — check connectivity/proxy"
+        elif report.get("errors") and not report.get("listings"):
+            status = "🔴 " + _first_error(report)
+        elif not report.get("listings"):
+            status = "🟠 reachable but nothing parsed — selectors need updating"
+        else:
+            status = "🟢 ok"
+        lines.append(
+            f"| {name} | {report.get('urls_ok', 0)}/{report.get('urls_tried', 0)} "
+            f"| {report.get('listings', 0)} | {extractor} | {status} |"
+        )
+    return "\n".join(lines)
+
+
+def _first_error(report: dict) -> str:
+    errors = report.get("errors") or []
+    if not errors:
+        return "failed"
+    text = str(errors[0])
+    return (text[:110] + "…") if len(text) > 110 else text
+
+
+def render_diagnostics(reports: dict[str, dict], listings: Sequence) -> str:
+    """A fuller picture for --diagnose, including what parsed and what did not."""
+    lines = ["## Portal diagnostics", "", render_source_table(reports), ""]
+
+    by_source: dict[str, list] = {}
+    for listing in listings:
+        by_source.setdefault(listing.source, []).append(listing)
+
+    for name, report in reports.items():
+        found = by_source.get(name, [])
+        lines.append(f"### {name}")
+        if found:
+            sample = found[0]
+            missing = [
+                field
+                for field in ("price_eur", "area_sqm", "bedrooms", "lat")
+                if getattr(sample, field) is None
+            ]
+            with_size = sum(1 for l in found if l.area_sqm)
+            lines.append(
+                f"- {len(found)} parsed, {with_size} with a usable size "
+                f"({len(found) - with_size} would be dropped — try `--enrich-details 25`)"
+            )
+            lines.append(f"- Sample: {sample.title[:70]!r} — {sample.price_eur} — {sample.url}")
+            if missing:
+                lines.append(f"- Missing on the sample: {', '.join(missing)}")
+        else:
+            lines.append("- nothing parsed")
+            for error in (report.get("errors") or [])[:2]:
+                lines.append(f"- {_first_error({'errors': [error]})}")
+            if report.get("blocked"):
+                fix = (
+                    "the portal refused an automated request — rerun with "
+                    "`--engine browser`"
+                )
+            elif report.get("unreachable"):
+                fix = (
+                    "the host could not be reached at all — this is connectivity "
+                    "or a proxy, not the scraper"
+                )
+            elif report.get("urls_ok"):
+                fix = (
+                    "the page loaded but no card matched — open a search URL in a "
+                    f"browser, find the repeating result element, and update `{name}`'s "
+                    "selectors in `larnaca_agent/scrapers/portals.py`"
+                )
+            else:
+                fix = "no page loaded; check the search URLs for this portal"
+            lines.append(f"- Fix: {fix}.")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_json(deals: Sequence[Deal], summary: dict) -> str:
     return json.dumps(
         {"summary": summary, "deals": [deal.to_dict() for deal in deals]},

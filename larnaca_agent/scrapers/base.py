@@ -69,6 +69,15 @@ class BaseScraper:
     def __init__(self, fetcher: Fetcher, max_pages: int = 3):
         self.fetcher = fetcher
         self.max_pages = max_pages
+        # Populated by collect() so the CLI can explain what each portal did.
+        self.report: dict[str, Any] = {
+            "urls_tried": 0,
+            "urls_ok": 0,
+            "blocked": 0,
+            "listings": 0,
+            "extractors": {},
+            "errors": [],
+        }
 
     # ------------------------------------------------------------- interface
 
@@ -89,19 +98,32 @@ class BaseScraper:
             for _ in range(self.max_pages):
                 if not page_url:
                     break
+                self.report["urls_tried"] += 1
                 try:
                     html = self.fetcher.get(page_url)
                 except FetchError as exc:
                     log.warning("[%s] %s", self.name, exc)
+                    self.report["errors"].append(str(exc))
+                    text = str(exc)
+                    if "blocking automated requests" in text:
+                        self.report["blocked"] += 1
+                    elif "Proxy" in text or "NameResolution" in text or "timed out" in text:
+                        self.report["unreachable"] = self.report.get("unreachable", 0) + 1
                     break
 
+                self.report["urls_ok"] += 1
                 soup = BeautifulSoup(html, "lxml")
                 page_listings = list(self.parse_results(soup, page_url))
                 for listing in page_listings:
                     if hint and not listing.location_text:
                         listing.location_text = hint
                     listing.raw.setdefault("area_hint", hint)
+                    extractor = listing.raw.get("extractor", "?")
+                    self.report["extractors"][extractor] = (
+                        self.report["extractors"].get(extractor, 0) + 1
+                    )
                 listings.extend(page_listings)
+                self.report["listings"] += len(page_listings)
                 log.info(
                     "[%s] %s -> %d listings", self.name, page_url, len(page_listings)
                 )
@@ -130,6 +152,41 @@ class BaseScraper:
             if listing.url not in seen_urls:
                 seen_urls.add(listing.url)
                 yield listing
+
+    def enrich_detail(self, listing: Listing) -> Listing:
+        """Fill missing fields from the advert's own page.
+
+        Search cards frequently omit the covered area, and a listing without a
+        size cannot be benchmarked. Detail pages almost always carry it, along
+        with coordinates and the construction year.
+        """
+        try:
+            html = self.fetcher.get(listing.url)
+        except FetchError as exc:
+            log.debug("[%s] detail fetch failed for %s: %s", self.name, listing.url, exc)
+            return listing
+
+        soup = BeautifulSoup(html, "lxml")
+
+        for candidate in self.parse_results(soup, listing.url):
+            for name in ("area_sqm", "bedrooms", "bathrooms", "year_built", "lat", "lon"):
+                if getattr(listing, name) is None:
+                    setattr(listing, name, getattr(candidate, name))
+
+        text = soup.get_text(" ", strip=True)
+        if listing.area_sqm is None:
+            listing.area_sqm = parse_sqm(text)
+        if listing.year_built is None:
+            listing.year_built = parse_year(_construction_year_text(text))
+        if listing.lat is None or listing.lon is None:
+            coordinates = _find_coordinates(html)
+            if coordinates:
+                listing.lat, listing.lon = coordinates
+        if not listing.description:
+            listing.description = text[:1500]
+
+        listing.raw["detail_fetched"] = True
+        return listing
 
     def next_page_url(self, soup: BeautifulSoup, page_url: str) -> Optional[str]:
         for selector in self.selectors.next_page:
@@ -269,14 +326,25 @@ class BaseScraper:
     # -------------------------------------------------------------- layer 3
 
     def _from_cards(self, soup: BeautifulSoup, page_url: str) -> Iterator[Listing]:
-        cards = []
+        cards, how = [], "declared"
         for selector in self.selectors.card:
             cards = soup.select(selector)
             if cards:
                 break
+        if not cards:
+            # The portal redesigned, or these selectors were always wrong.
+            cards, how = detect_cards(soup), "auto"
+            if cards:
+                log.info(
+                    "[%s] declared card selectors matched nothing; "
+                    "auto-detected %d cards",
+                    self.name,
+                    len(cards),
+                )
         for card in cards:
             listing = self._listing_from_card(card, page_url)
             if listing:
+                listing.raw["extractor"] = f"css-{how}"
                 yield listing
 
     def _listing_from_card(self, card, page_url: str) -> Optional[Listing]:
@@ -302,6 +370,91 @@ class BaseScraper:
             raw={"extractor": "css"},
         )
         return listing if listing.price_eur else None
+
+
+# ------------------------------------------------------- detail-page helpers
+
+_COORD_PATTERNS = (
+    re.compile(r'"lat(?:itude)?"\s*:\s*(-?\d{1,2}\.\d+).{0,40}?"l(?:on|ng)(?:gitude)?"\s*:\s*(-?\d{1,3}\.\d+)', re.DOTALL),
+    re.compile(r'data-lat(?:itude)?=["\'](-?\d{1,2}\.\d+)["\'].{0,120}?data-l(?:on|ng)[a-z]*=["\'](-?\d{1,3}\.\d+)["\']', re.DOTALL),
+    re.compile(r'maps\?q=(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)'),
+    re.compile(r'@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)'),
+)
+
+# Cyprus sits in this box; anything outside is a false positive.
+_CY_BOUNDS = (34.4, 35.8, 32.2, 34.7)
+
+
+def _find_coordinates(html: str) -> Optional[tuple[float, float]]:
+    """Pull a lat/lon pair out of a detail page's map widget or JSON."""
+    for pattern in _COORD_PATTERNS:
+        match = pattern.search(html)
+        if not match:
+            continue
+        try:
+            lat, lon = float(match.group(1)), float(match.group(2))
+        except ValueError:
+            continue
+        min_lat, max_lat, min_lon, max_lon = _CY_BOUNDS
+        if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
+            return lat, lon
+    return None
+
+
+def _construction_year_text(text: str) -> str:
+    """Narrow a page's text down to the phrase that states the build year."""
+    match = re.search(
+        r"(?:construction\s*year|year\s*built|built\s*in|έτος\s*κατασκευής)\D{0,12}(\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(0) if match else ""
+
+
+# --------------------------------------------------- heuristic card detection
+
+_PRICE_TEXT_RE = re.compile(r"(?:€|EUR)\s*\d[\d.,\s]{3,}|\d[\d.,\s]{3,}\s*(?:€|EUR)")
+
+
+def detect_cards(soup: BeautifulSoup, min_group: int = 3) -> list:
+    """Infer the repeated result-card element without knowing the markup.
+
+    Every results page is the same shape: a list of sibling blocks, each holding
+    a price and a link to the advert. This finds the price-bearing nodes, walks
+    up to the nearest ancestor that also owns a link, and keeps the largest
+    group of ancestors that share a tag/class signature. That group is the card
+    set — which means a portal redesign costs a warning, not a broken scraper.
+    """
+    candidates: dict[tuple, list] = {}
+
+    for text_node in soup.find_all(string=_PRICE_TEXT_RE):
+        node = text_node.parent
+        for _ in range(6):  # climb no further than a card would sit
+            if node is None or node.name in ("body", "html", "[document]"):
+                break
+            if node.find("a", href=True) is not None:
+                signature = (node.name, tuple(sorted(node.get("class") or ())))
+                # An unclassed generic wrapper is too weak a signal to group on.
+                if signature[1] or node.get("id") is None:
+                    candidates.setdefault(signature, []).append(node)
+                break
+            node = node.parent
+
+    if not candidates:
+        return []
+
+    signature, group = max(candidates.items(), key=lambda item: len(item[1]))
+    if len(group) < min_group:
+        return []
+
+    # De-duplicate while preserving order; the same node can be reached twice.
+    seen, unique = set(), []
+    for node in group:
+        marker = id(node)
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(node)
+    return unique
 
 
 # ---------------------------------------------------------------- utilities

@@ -15,7 +15,17 @@ from .config import (
 )
 from .models import Listing
 
-_PRICE_RE = re.compile(r"(\d[\d.,\s ]*)")
+# A price is either grouped ("210.000", "185 000", "185,000.50") or a plain
+# run of digits. Anything looser swallows the next number on the card.
+_NUMBER = r"\d{1,3}(?:[.,\s ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"
+_PRICE_RE = re.compile(rf"({_NUMBER})")
+# A number tied to a currency marker is the price; a bare number inside a
+# sentence is usually a bedroom count, a floor or a street number.
+_CURRENCY_PRICE_RE = re.compile(
+    rf"(?:\u20ac|EUR)\s*({_NUMBER})|({_NUMBER})\s*(?:\u20ac|EUR)",
+    re.IGNORECASE,
+)
+_HAS_LETTERS_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 _SQM_RE = re.compile(
     r"(\d[\d.,]*)\s*(?:m²|m2|sq\.?\s*m|sqm|τ\.?μ\.?|τετρ)", re.IGNORECASE
 )
@@ -43,11 +53,26 @@ def parse_price(value: object) -> Optional[float]:
     if not any(ch.isdigit() for ch in text):
         return None
 
-    match = _PRICE_RE.search(text.replace(" ", " "))
-    if not match:
-        return None
+    normalised = text.replace(" ", " ")
 
-    number = re.sub(r"[\s ]", "", match.group(1))
+    # Prefer a number attached to a currency marker. Card text such as
+    # "Nice 2-bedroom flat € 210.000 85 m²" would otherwise yield 2.
+    currency_match = _CURRENCY_PRICE_RE.search(normalised)
+    if currency_match:
+        raw_number = currency_match.group(1) or currency_match.group(2)
+    else:
+        match = _PRICE_RE.search(normalised)
+        if not match:
+            return None
+        raw_number = match.group(1)
+        # No currency marker, and prose around the number: too ambiguous to
+        # read as a price unless it is large enough to be one.
+        if _HAS_LETTERS_RE.search(normalised):
+            digits = re.sub(r"\D", "", raw_number)
+            if len(digits) < 4:
+                return None
+
+    number = re.sub(r"[\s ]", "", raw_number)
     if "," in number and "." in number:
         # Whichever separator comes last is the decimal separator.
         decimal_sep = "," if number.rfind(",") > number.rfind(".") else "."
