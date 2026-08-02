@@ -73,13 +73,18 @@ class IndexCyScraper(BaseScraper):
     name = "index.cy"
     base_url = "https://index.cy"
     selectors = CardSelectors(
-        card=("div.property-card", "article.property", "div[class*=listing-item]"),
-        link=("a[href*='/property/']", "a[href]"),
-        title=("h2", "h3", ".property-title"),
-        price=(".property-price", "[class*=price]"),
-        area=("[class*=covered]", "[class*=area]", "[class*=sqm]"),
-        bedrooms=("[class*=bedroom]", "[class*=bed]"),
-        location=("[class*=location]", "[class*=address]"),
+        card=(
+            "article",
+            "div[class*=listing-item]",
+            "div.property-card",
+            "div[class*=card]",
+        ),
+        link=("a[href^='/sale/']", "a[href*='/sale/']", "a[href]"),
+        title=("h2", "h3", ".property-title", "[class*=title]"),
+        price=("[class*=price]", ".price", "[class*=amount]"),
+        area=("[class*=covered]", "[class*=area]", "[class*=sqm]", "[class*=size]"),
+        bedrooms=("[class*=bedroom]", "[class*=bed]", "[class*=room]"),
+        location=("[class*=location]", "[class*=address]", "[class*=district]"),
     )
 
     AREA_PATHS = {
@@ -111,13 +116,13 @@ class ScalaScraper(BaseScraper):
     name = "scala.cy"
     base_url = "https://www.scala.cy"
     selectors = CardSelectors(
-        card=("div.property-item", "article", "div[class*=card]"),
-        link=("a[href*='-for-sale/']", "a[href]"),
-        title=("h2", "h3", ".title"),
-        price=("[class*=price]",),
+        card=("article", "div[class*=card]", "div[class*=property]", "div[class*=item]"),
+        link=("a[href*='-for-sale/']", "a[href*='/property']", "a[href]"),
+        title=("h2", "h3", ".title", "[class*=title]"),
+        price=("[class*=price]", ".price"),
         area=("[class*=area]", "[class*=sqm]", "[class*=size]"),
-        bedrooms=("[class*=bed]",),
-        location=("[class*=location]", "[class*=area-name]"),
+        bedrooms=("[class*=bed]", "[class*=room]"),
+        location=("[class*=location]", "[class*=area-name]", "[class*=district]"),
     )
 
     AREA_PATHS = {
@@ -150,13 +155,13 @@ class HomeCyScraper(BaseScraper):
     base_url = "https://home.cy"
     requires_browser = True
     selectors = CardSelectors(
-        card=("div[class*=announcement]", "div[class*=listing]", "article"),
-        link=("a[href*='/adv']", "a[href*='/property']", "a[href]"),
-        title=("h2", "h3", "[class*=title]"),
-        price=("[class*=price]",),
-        area=("[class*=area]", "[class*=sqm]"),
-        bedrooms=("[class*=bed]",),
-        location=("[class*=location]", "[class*=region]"),
+        card=("div.item.standard", "div[class*=announcement]", "div[class*=listing]", "article"),
+        link=("a.whole", "a[href*='/real-estate-for-sale/']", "a[href]"),
+        title=("[class*=title]", "h2", "h3", ".name"),
+        price=(".price", "[class*=price]"),
+        area=("[class*=area]", "[class*=sqm]", ".specs"),
+        bedrooms=("[class*=bed]", ".specs", "[class*=room]"),
+        location=(".location", "[class*=location]", "[class*=region]"),
     )
 
     SEARCH_PATH = "/real-estate-for-sale/apartments/larnaca"
