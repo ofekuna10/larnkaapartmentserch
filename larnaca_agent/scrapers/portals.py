@@ -33,30 +33,36 @@ class BazarakiScraper(BaseScraper):
         next_page=("a.number-list-next", "a[rel=next]", ".pagination a.next"),
     )
 
-    SEARCH_PATH = "/real-estate-for-sale/apartments-flats/district-larnaca/"
-    # Bazaraki exposes neighbourhoods as a query filter rather than a path.
-    AREA_QUERY = {
-        "finikoudes": "Finikoudes",
-        "mackenzie": "Mackenzie",
-        "livadia": "Livadia",
+    # Bazaraki puts the neighbourhood in the path, with its own slugs.
+    AREA_PATHS = {
+        "finikoudes": "/real-estate-for-sale/apartments-flats/larnaka-finikoudes/",
+        "mackenzie": "/real-estate-for-sale/apartments-flats/larnaka-makenzy/",
+        "livadia": "/real-estate-for-sale/apartments-flats/livadia-larnakas/",
     }
+    # Central quarters that sit inside the coastal ring but are advertised under
+    # their own slug; the geo stage decides which target area they fall into.
+    NEIGHBOURING_PATHS = (
+        "/real-estate-for-sale/apartments-flats/larnaka-chrysopolitissa/",
+        "/real-estate-for-sale/apartments-flats/larnaka-harbor/",
+        "/real-estate-for-sale/apartments-flats/larnaka-skala/",
+    )
+    FALLBACK_PATH = "/real-estate-for-sale/apartments-flats/larnaka-district-larnaca/"
+    QUERY = "?ordering=newest"
 
     def search_urls(self, area_keys: Iterable[str]) -> list[str]:
-        urls = []
-        for key in area_keys:
-            term = self.AREA_QUERY.get(key)
-            if not term:
-                continue
-            urls.append(
-                f"{self.base_url}{self.SEARCH_PATH}?q={term}&ordering=newest"
-            )
+        urls = [
+            f"{self.base_url}{self.AREA_PATHS[key]}{self.QUERY}"
+            for key in area_keys
+            if key in self.AREA_PATHS
+        ]
+        urls += [f"{self.base_url}{path}{self.QUERY}" for path in self.NEIGHBOURING_PATHS]
         # District-wide sweep catches ads that do not name the neighbourhood.
-        urls.append(f"{self.base_url}{self.SEARCH_PATH}?ordering=newest")
+        urls.append(f"{self.base_url}{self.FALLBACK_PATH}{self.QUERY}")
         return urls
 
     def area_hint(self, url: str) -> Optional[str]:
-        for key, term in self.AREA_QUERY.items():
-            if f"q={term}" in url:
+        for key, path in self.AREA_PATHS.items():
+            if path in url:
                 return key
         return None
 
@@ -119,7 +125,7 @@ class ScalaScraper(BaseScraper):
         "mackenzie": "/apartment-for-sale/mackenzie/",
         "livadia": "/apartment-for-sale/livadia/",
     }
-    FALLBACK_PATH = "/apartment-for-sale/larnaca/"
+    FALLBACK_PATH = "/property-for-sale/larnaca/"
 
     def search_urls(self, area_keys: Iterable[str]) -> list[str]:
         urls = [
@@ -229,6 +235,81 @@ class BuySellCyprusScraper(BaseScraper):
         return [f"{self.base_url}{self.SEARCH_PATH}"]
 
 
+class ZyprusScraper(BaseScraper):
+    """zyprus.com — searchable by neighbourhood through a query parameter."""
+
+    name = "zyprus"
+    base_url = "https://www.zyprus.com"
+    selectors = CardSelectors(
+        card=("div[class*=property-card]", "div[class*=listing]", "article"),
+        link=("a[href*='/property/']", "a[href]"),
+        title=("h2", "h3", "[class*=title]"),
+        price=("[class*=price]",),
+        area=("[class*=covered]", "[class*=area]", "[class*=sqm]"),
+        bedrooms=("[class*=bed]",),
+        location=("[class*=location]", "[class*=address]"),
+    )
+
+    # type_top[]=1 restricts the search to apartments.
+    SEARCH_PATH = "/search/sale/grid?location={area}%2C+Larnaca&type_top%5B%5D=1"
+    AREA_TERMS = {
+        "finikoudes": "Finikoudes",
+        "mackenzie": "Mackenzie",
+        "livadia": "Livadia",
+    }
+
+    def search_urls(self, area_keys: Iterable[str]) -> list[str]:
+        return [
+            self.base_url + self.SEARCH_PATH.format(area=self.AREA_TERMS[key])
+            for key in area_keys
+            if key in self.AREA_TERMS
+        ]
+
+    def area_hint(self, url: str) -> Optional[str]:
+        for key, term in self.AREA_TERMS.items():
+            if f"location={term}" in url:
+                return key
+        return None
+
+
+class OfferCyScraper(BaseScraper):
+    """offer.com.cy — per-neighbourhood apartment pages."""
+
+    name = "offer.com.cy"
+    base_url = "https://www.offer.com.cy"
+    selectors = CardSelectors(
+        card=("div[class*=property]", "div[class*=listing]", "article"),
+        link=("a[href*='/en/']", "a[href]"),
+        title=("h2", "h3", "[class*=title]"),
+        price=("[class*=price]",),
+        area=("[class*=area]", "[class*=sqm]"),
+        bedrooms=("[class*=bed]",),
+        location=("[class*=location]",),
+    )
+
+    AREA_PATHS = {
+        "finikoudes": "/en/apartments/for-sale/larnaca--finikoudes/",
+        "mackenzie": "/en/apartments/for-sale/larnaca--mackenzie/",
+        "livadia": "/en/apartments/for-sale/larnaca--livadia/",
+    }
+    FALLBACK_PATH = "/en/apartments/for-sale/larnaca/"
+
+    def search_urls(self, area_keys: Iterable[str]) -> list[str]:
+        urls = [
+            f"{self.base_url}{self.AREA_PATHS[key]}"
+            for key in area_keys
+            if key in self.AREA_PATHS
+        ]
+        urls.append(f"{self.base_url}{self.FALLBACK_PATH}")
+        return urls
+
+    def area_hint(self, url: str) -> Optional[str]:
+        for key, path in self.AREA_PATHS.items():
+            if path in url:
+                return key
+        return None
+
+
 ALL_SCRAPERS: tuple[type[BaseScraper], ...] = (
     BazarakiScraper,
     IndexCyScraper,
@@ -236,4 +317,6 @@ ALL_SCRAPERS: tuple[type[BaseScraper], ...] = (
     HomeCyScraper,
     DomCyScraper,
     BuySellCyprusScraper,
+    ZyprusScraper,
+    OfferCyScraper,
 )

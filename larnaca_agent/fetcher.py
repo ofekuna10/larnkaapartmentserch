@@ -170,18 +170,63 @@ class Fetcher:
 
         if self._browser is None:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(headless=True)
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                # Headless Chromium advertises itself as automated, which is
+                # what most of these portals actually reject.
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+            )
 
-        page = self._browser.new_page(user_agent=USER_AGENT, locale="en-GB")
+        page = self._browser.new_page(
+            user_agent=USER_AGENT,
+            locale="en-GB",
+            viewport={"width": 1440, "height": 900},
+            timezone_id="Asia/Nicosia",
+        )
         try:
             page.goto(url, timeout=self.timeout * 1000, wait_until="domcontentloaded")
-            # Portals render listings client-side; give the XHR a moment.
-            page.wait_for_timeout(2500)
+            self._dismiss_consent(page)
+            # Listings are rendered client-side and lazily; scroll to load them.
+            self._autoscroll(page)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass  # a portal with polling XHRs never goes idle
             return page.content()
         except Exception as exc:
             raise FetchError(f"browser failed to load {url}: {exc}") from exc
         finally:
             page.close()
+
+    @staticmethod
+    def _dismiss_consent(page) -> None:
+        """Click away the cookie banner that otherwise covers the results."""
+        for selector in (
+            "#onetrust-accept-btn-handler",
+            "button#accept-cookies",
+            "button[aria-label*='Accept' i]",
+            "text=/^(Accept|Accept all|I agree|Συμφωνώ)$/i",
+        ):
+            try:
+                element = page.locator(selector).first
+                if element.is_visible(timeout=1200):
+                    element.click(timeout=1200)
+                    page.wait_for_timeout(400)
+                    return
+            except Exception:
+                continue
+
+    @staticmethod
+    def _autoscroll(page, steps: int = 6) -> None:
+        for _ in range(steps):
+            try:
+                page.mouse.wheel(0, 1600)
+                page.wait_for_timeout(450)
+            except Exception:
+                return
 
     # ------------------------------------------------------------- plumbing
 

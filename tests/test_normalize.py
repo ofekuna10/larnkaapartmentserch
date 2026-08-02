@@ -36,6 +36,22 @@ def test_parse_price(text, expected):
 @pytest.mark.parametrize(
     "text,expected",
     [
+        # Whole-card text: the currency marker must win over the bedroom count.
+        ("Nice 2-bedroom in Mackenzie € 210.000 85 m² 2 bedrooms", 210000),
+        ("3-bedroom apartment 145,000 EUR 110 m²", 145000),
+        ("Penthouse · €1.250.000 · 4 bed", 1250000),
+        # No currency and a small bare number in prose is not a price.
+        ("2 bedrooms", None),
+        ("Floor 3 of 5", None),
+    ],
+)
+def test_parse_price_from_card_text(text, expected):
+    assert parse_price(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
         ("85 m²", 85),
         ("85m2", 85),
         ("Covered area: 102 sq.m", 102),
