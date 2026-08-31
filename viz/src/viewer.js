@@ -208,6 +208,11 @@ function run() {
       });
     });
 
+    var furn = new THREE.Group();
+    (unit.furniture || []).forEach(function (f) { furn.add(piece(f)); });
+    g.add(furn);
+    g.userData.furniture = furn;
+
     // the plan sheet itself, laid on the floor
     var tex = loader.load(unit.texture.data);
     if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
@@ -228,9 +233,136 @@ function run() {
     g.position.set(-w / 2, 0, -d / 2);
     var wrap = new THREE.Group();
     wrap.add(g);
-    wrap.userData = { inner: g, span: Math.max(w, d), w: w, d: d };
+    wrap.userData = { inner: g, span: Math.max(w, d), w: w, d: d, spawn: unit.spawn };
     built[unit.key] = wrap;
     return wrap;
+  }
+
+
+  // ---- furniture -------------------------------------------------------
+  // Muted, architectural-model tones rather than the plan's photographic
+  // colours: the point is to read the volumes and the circulation between
+  // them, and the plan overlay on the floor already carries the real finishes.
+  var FMAT = {
+    linen:      new THREE.MeshStandardMaterial({ color: 0xd5cfc3, roughness: 0.95 }),
+    upholstery: new THREE.MeshStandardMaterial({ color: 0x9ea79d, roughness: 0.95 }),
+    cushion:    new THREE.MeshStandardMaterial({ color: 0xbaa691, roughness: 0.95 }),
+    accent:     new THREE.MeshStandardMaterial({ color: 0x6d989b, roughness: 0.8 }),
+    timber:     new THREE.MeshStandardMaterial({ color: 0x9b7047, roughness: 0.78 }),
+    stone:      new THREE.MeshStandardMaterial({ color: 0xbcb7ab, roughness: 0.7 }),
+    ceramic:    new THREE.MeshStandardMaterial({ color: 0xf1f0ed, roughness: 0.28 }),
+    metal:      new THREE.MeshStandardMaterial({ color: 0x9aa0a4, roughness: 0.42, metalness: 0.5 }),
+    greenery:   new THREE.MeshStandardMaterial({ color: 0x62794e, roughness: 0.9 }),
+    water:      new THREE.MeshStandardMaterial({ color: 0xcfdfe4, roughness: 0.12 })
+  };
+
+  function box(w, h, d, mat, x, y, z, into) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y + h / 2, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    into.add(m);
+    return m;
+  }
+
+  function cyl(r, h, mat, x, y, z, into, seg) {
+    var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg || 24), mat);
+    m.position.set(x, y + h / 2, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    into.add(m);
+    return m;
+  }
+
+  // where the backrest or headboard sits, given the side the piece fronts onto
+  function backSide(facing) {
+    if (facing === 'n') return [0, 1];
+    if (facing === 's') return [0, -1];
+    if (facing === 'e') return [-1, 0];
+    return [1, 0];
+  }
+
+  function piece(f) {
+    var g = new THREE.Group();
+    var w = Math.max(f.size[0], 0.12), d = Math.max(f.size[1], 0.12);
+    var mat = FMAT[f.mat] || FMAT.timber;
+    var b = backSide(f.facing);
+    var t = 0.12; // backrest thickness
+
+    if (f.form === 'box') {
+      box(w, f.h, d, mat, 0, 0, 0, g);
+
+    } else if (f.form === 'soft') {
+      // seat inset from the back panel, so the two read as separate volumes
+      var sw = w - (b[0] ? t : 0), sd = d - (b[1] ? t : 0);
+      box(sw, f.h, sd, mat, b[0] * t / 2, 0, b[1] * t / 2, g);
+      box(b[0] ? t : w, f.back, b[1] ? t : d, mat,
+          b[0] * (w - t) / 2, 0, b[1] * (d - t) / 2, g);
+      if (f.kind === 'sofa' || f.kind === 'sofa_outdoor') {   // arms
+        var along = b[1] ? 'x' : 'z';
+        var span = along === 'x' ? w : d;
+        for (var i = -1; i <= 1; i += 2) {
+          var ax = along === 'x' ? i * (span - 0.16) / 2 : b[0] * t / 2;
+          var az = along === 'x' ? b[1] * t / 2 : i * (span - 0.16) / 2;
+          box(along === 'x' ? 0.16 : w, f.back * 0.7, along === 'x' ? d : 0.16,
+              mat, ax, 0, az, g);
+        }
+      }
+
+    } else if (f.form === 'bed') {
+      box(w, 0.30, d, FMAT.timber, 0, 0, 0, g);
+      box(w - 0.08, 0.26, d - 0.08, mat, 0, 0.30, 0, g);
+      box(b[0] ? 0.10 : w, 0.95, b[1] ? 0.10 : d, FMAT.timber,
+          b[0] * w / 2, 0, b[1] * d / 2, g);
+      var pw = (b[1] ? w : d) / 2 - 0.10;                     // pillows
+      for (var k = -1; k <= 1; k += 2) {
+        var px = b[1] ? k * (w / 4) : b[0] * (w / 2 - 0.34);
+        var pz = b[1] ? b[1] * (d / 2 - 0.34) : k * (d / 4);
+        box(b[1] ? pw : 0.52, 0.11, b[1] ? 0.52 : pw, FMAT.linen, px, 0.56, pz, g);
+      }
+
+    } else if (f.form === 'table') {
+      box(w, 0.05, d, mat, 0, f.h - 0.05, 0, g);
+      for (var sx = -1; sx <= 1; sx += 2) {
+        for (var sz = -1; sz <= 1; sz += 2) {
+          box(0.07, f.h - 0.05, 0.07, FMAT.timber,
+              sx * (w / 2 - 0.09), 0, sz * (d / 2 - 0.09), g);
+        }
+      }
+
+    } else if (f.form === 'round') {
+      var r = Math.min(w, d) / 2;
+      cyl(r, 0.05, mat, 0, f.h - 0.05, 0, g);
+      cyl(0.06, f.h - 0.05, FMAT.timber, 0, 0, 0, g, 12);
+      cyl(r * 0.45, 0.03, FMAT.timber, 0, 0, 0, g, 16);
+
+    } else if (f.form === 'tub') {
+      box(w, f.h, d, mat, 0, 0, 0, g);
+      box(w - 0.16, 0.04, d - 0.16, FMAT.water, 0, f.h - 0.07, 0, g);
+
+    } else if (f.form === 'wc') {
+      box(w * 0.62, f.h, d * 0.86, mat, -b[0] * w * 0.12, 0, -b[1] * d * 0.12, g);
+      box(b[0] ? 0.18 : w * 0.7, 0.78, b[1] ? 0.18 : d * 0.7, mat,
+          b[0] * (w / 2 - 0.09), 0, b[1] * (d / 2 - 0.09), g);
+
+    } else if (f.form === 'basin') {
+      cyl(Math.min(w, d) * 0.18, f.h - 0.14, mat, 0, 0, 0, g, 16);
+      cyl(Math.min(w, d) * 0.46, 0.14, mat, 0, f.h - 0.14, 0, g);
+
+    } else if (f.form === 'plant') {
+      var pr = Math.min(w, d) * 0.34;
+      cyl(pr, f.h, FMAT.stone, 0, 0, 0, g);
+      var foliage = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(Math.max(0.20, Math.min(w, d) * 0.34), 1),
+        FMAT.greenery
+      );
+      foliage.position.set(0, f.h + Math.max(0.16, Math.min(w, d) * 0.26), 0);
+      foliage.castShadow = true;
+      g.add(foliage);
+    }
+
+    g.position.set(f.centre[0], 0.04, f.centre[1]);
+    return g;
   }
 
   // ---- camera control --------------------------------------------------
@@ -296,14 +428,23 @@ function run() {
   addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
 
   // ---- state -----------------------------------------------------------
-  var current = null, cut = false, furn = true;
+  var current = null, cut = false, overlay = true, furniture = true;
+
+  // Start a walk-through at the clear spot the extractor found, converted from
+  // the unit's own coordinates into the centred model.
+  function resetWalk(wrap) {
+    var u = wrap.userData;
+    var sp = u.spawn || { at: [u.w / 2, u.d / 2], heading: 0 };
+    walk.pos.set(sp.at[0] - u.w / 2, 1.62, sp.at[1] - u.d / 2);
+    walk.az = sp.heading;
+    walk.el = -0.04;
+  }
 
   function frameUnit(wrap) {
     var span = wrap.userData.span;
     orbit.dist = span * 1.5;
     orbit.target.set(0, 0.9, 0);
-    walk.pos.set(0, 1.62, wrap.userData.d * 0.32);
-    walk.az = Math.PI;
+    resetWalk(wrap);
     var s = Math.max(wrap.userData.w, wrap.userData.d) * 0.75;
     sun.shadow.camera.left = sun.shadow.camera.bottom = -s;
     sun.shadow.camera.right = sun.shadow.camera.top = s;
@@ -316,7 +457,9 @@ function run() {
     var w = current.userData.inner.userData.walls;
     if (w) w.scale.y = cut ? 0.42 : 1;
     var o = current.userData.inner.userData.overlay;
-    if (o) o.visible = furn;
+    if (o) o.visible = overlay;
+    var fu = current.userData.inner.userData.furniture;
+    if (fu) fu.visible = furniture;
   }
 
   function select(key) {
@@ -374,10 +517,7 @@ function run() {
       });
       if (mode === 'plan') { orbit.el = 1.48; orbit.az = 0; }
       if (mode === 'doll') { orbit.el = 0.86; orbit.az = -0.72; }
-      if (mode === 'walk' && current) {
-        walk.pos.set(0, 1.62, current.userData.d * 0.32);
-        walk.az = Math.PI;
-      }
+      if (mode === 'walk' && current) resetWalk(current);
       document.getElementById('tip').textContent = TIPS[mode];
     });
   });
@@ -385,7 +525,9 @@ function run() {
     b.addEventListener('click', function () {
       var on = b.getAttribute('aria-pressed') !== 'true';
       b.setAttribute('aria-pressed', String(on));
-      if (b.dataset.toggle === 'cut') cut = on; else furn = on;
+      if (b.dataset.toggle === 'cut') cut = on;
+      else if (b.dataset.toggle === 'furn') overlay = on;
+      else furniture = on;
       applyFlags();
     });
   });

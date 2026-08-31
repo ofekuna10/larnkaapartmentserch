@@ -30,6 +30,8 @@ from scipy import ndimage
 from shapely.geometry import Polygon
 from skimage import measure
 
+from . import furniture
+
 # ---------------------------------------------------------------------------
 # per-page description of the four units
 # ---------------------------------------------------------------------------
@@ -388,6 +390,99 @@ def strips(mask: np.ndarray, scale: float, origin, deck: np.ndarray) -> list[dic
 # ---------------------------------------------------------------------------
 
 
+def place_furniture(key: str, scale: float, origin) -> list[dict]:
+    """Convert the listed footprints from page pixels into the model's metres."""
+    ox, oy = origin
+    out = []
+    for item in furniture.items_for(key):
+        x0, y0, x1, y1 = item.pop("box_px")
+        item["centre"] = [round((((x0 + x1) / 2) - ox) / scale, 3),
+                          round((((y0 + y1) / 2) - oy) / scale, 3)]
+        item["size"] = [round((x1 - x0) / scale, 3), round((y1 - y0) / scale, 3)]
+        out.append(item)
+    return out
+
+
+def _sightline(free, deck, x, y, scale):
+    """The longest clear ray from a point, and its bearing.
+
+    Rays that cross a balcony score higher: looking out at the terrace is the
+    shot worth opening a walk-through on.
+    """
+    h, w = free.shape
+    best, heading, plain = -1.0, 0.0, 0.0
+    for step in range(48):
+        ang = step * math.tau / 48
+        dx, dy = math.sin(ang), math.cos(ang)
+        reach, saw_deck = 0.0, False
+        for t in range(4, int(28 * scale), 4):
+            px, py = int(x + dx * t), int(y + dy * t)
+            if not (0 <= px < w and 0 <= py < h) or not free[py, px]:
+                break
+            reach = t / scale
+            saw_deck = saw_deck or bool(deck[py, px])
+        score = reach + (4.0 if saw_deck else 0.0)
+        if score > best:
+            best, heading, plain = score, ang, reach
+    return best, heading, plain
+
+
+def spawn_point(
+    free: np.ndarray,
+    deck: np.ndarray,
+    scale: float,
+    origin,
+    indoors: np.ndarray | None = None,
+) -> dict:
+    """Where a walk-through should start, and which way it should look.
+
+    Standing at the single most open point is not enough: in a flat with a
+    generous bedroom and a long living room, the bedroom can win on clearance
+    alone and open the model facing a wall a metre away.  So several clear spots
+    are tried and the one with both room around it and a long view down the flat
+    is taken.  Balconies are excluded from the candidates - a walk-through that
+    starts outdoors looking back in has it backwards - but rays may cross them.
+    """
+    room = free if indoors is None else indoors
+    dt = ndimage.distance_transform_edt(room)
+    order = np.argsort(dt, axis=None)[::-1]
+    h, w = dt.shape
+    spread = 2.0 * scale
+
+    # a metre of elbow room, relaxed only if the plan is too tight to offer it
+    picks: list[tuple[int, int]] = []
+    for floor in (1.00, 0.55):
+        for flat in order[:400000]:
+            y, x = divmod(int(flat), w)
+            if dt[y, x] < floor * scale:
+                break
+            if all((x - px) ** 2 + (y - py) ** 2 > spread**2 for px, py in picks):
+                picks.append((x, y))
+            if len(picks) >= 12:
+                break
+        if picks:
+            break
+
+    ox, oy = origin
+    best = None
+    for x, y in picks:
+        score, heading, reach = _sightline(free, deck, x, y, scale)
+        total = score + 1.5 * dt[y, x] / scale
+        if best is None or total > best[0]:
+            best = (total, x, y, heading, reach, dt[y, x] / scale)
+
+    if best is None:
+        return {"at": [0.0, 0.0], "heading": 0.0, "clearance": 0.0, "sightline": 0.0}
+
+    _, x, y, heading, reach, clear = best
+    return {
+        "at": [round((x - ox) / scale, 3), round((y - oy) / scale, 3)],
+        "heading": round(float(heading), 4),
+        "clearance": round(float(clear), 2),
+        "sightline": round(float(reach), 2),
+    }
+
+
 def texture(rgb: np.ndarray, slab: np.ndarray, out: Path, max_width: int = 1500) -> str:
     """The plan itself, background removed, as the floor texture."""
     h, w = slab.shape
@@ -457,6 +552,11 @@ def build(unit: Unit, doc: pymupdf.Document, outdir: Path) -> dict:
         "parapets": trace(rail, unit.scale, origin, tol_m=0.03),
         "deck": trace(deck_only, unit.scale, origin, tol_m=0.05),
         "glazing": strips(m["glass"], unit.scale, origin, m["deck"]),
+        "furniture": place_furniture(unit.key, unit.scale, origin),
+        "spawn": spawn_point(
+            slab & ~m["wall"] & ~joinery, m["deck"], unit.scale, origin,
+            indoors=slab & ~m["wall"] & ~joinery & ~m["deck"],
+        ),
         "rooms": unit.rooms,
         "texture": {
             "file": texture(rgb, slab, outdir / f"unit{unit.key}.png"),
@@ -498,6 +598,7 @@ def main() -> None:
             f"unit {model['key']}: {len(model['walls'])} wall shapes, "
             f"{len(model['glazing'])} openings, {len(model['parapets'])} parapets, "
             f"{len(model['joinery'])} joinery, "
+            f"{len(model['furniture'])} furniture, "
             f"{model['areas_m2']['internal_net']} m2 net internal "
             f"({model['areas_m2']['internal_gross']} gross) + "
             f"{model['areas_m2']['balcony']} m2 balcony, "

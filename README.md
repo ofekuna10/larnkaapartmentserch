@@ -193,6 +193,17 @@ belonging to a neighbouring unit. Pixels become metres via a per-page scale
 calibrated against the dimensions printed on the sheet; walls extrude to a
 2.70 m storey, parapets to 1.05 m, window heads to 2.15 m.
 
+Furniture is a separate step. The sheets draw it as photo-realistic top views,
+where a white sofa, a white bath and the pale travertine under both are the same
+few pixel values, so colour segmentation cannot tell them apart. The pieces are
+therefore listed explicitly in `tools/plan3d/furniture.py` — each entry is the
+footprint the plan draws, in that sheet's own pixel coordinates, which the
+extractor converts to metres with the same origin and scale it uses for the
+walls. Height and form come from a type table, so a bed becomes a divan with a
+headboard and a dining table becomes a top on legs. The viewer also gets a
+walk-through starting point per unit, chosen as the spot with both room around
+it and a long clear view down the flat.
+
 Two details are worth knowing when reading the output. The plans draw kitchen
 worktops, vanities and sideboards in the same grey as the walls, so anything
 thick but free-standing is modelled at counter height instead of full height,
