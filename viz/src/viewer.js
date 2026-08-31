@@ -1,4 +1,58 @@
-(function () {
+// The renderer needs three.js, which comes from a CDN. Try the mirrors the
+// sandbox allows in turn, and say so plainly on the canvas if none answer or if
+// the browser has no WebGL, rather than leaving an empty frame.
+(function boot() {
+  var SOURCES = [
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.128.0/three.min.js',
+    'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js'
+  ];
+  var stage = document.querySelector('main');
+
+  function fail(title, body) {
+    stage.setAttribute('data-failed', '');
+    document.getElementById('fb-title').textContent = title;
+    document.getElementById('fb-body').textContent = body;
+  }
+
+  function next(i) {
+    if (i >= SOURCES.length) {
+      return fail(
+        'The 3D library did not load',
+        'Every mirror was blocked or unreachable. Reload the page, or open it on ' +
+        'a connection that allows cdnjs.cloudflare.com.'
+      );
+    }
+    var el = document.createElement('script');
+    el.src = SOURCES[i];
+    el.onload = function () { window.THREE ? start() : next(i + 1); };
+    el.onerror = function () { next(i + 1); };
+    document.head.appendChild(el);
+  }
+
+  function start() {
+    try {
+      var probe = document.createElement('canvas');
+      if (!(probe.getContext('webgl') || probe.getContext('experimental-webgl'))) {
+        throw new Error('no webgl');
+      }
+    } catch (e) {
+      return fail(
+        'This browser cannot draw 3D',
+        'WebGL is switched off or unavailable here. Try another browser, or ' +
+        'enable hardware acceleration in the browser settings.'
+      );
+    }
+    try {
+      run();
+    } catch (e) {
+      fail('The model could not be drawn', String(e && e.message ? e.message : e));
+    }
+  }
+
+  next(0);
+
+function run() {
   var DATA = window.__UNITS__.units;
   var THREE = window.THREE;
   var dark = function () {
@@ -375,4 +429,5 @@
   resize();
   select(DATA[0].key);
   requestAnimationFrame(tick);
+}
 })();
