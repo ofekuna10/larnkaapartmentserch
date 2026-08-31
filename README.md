@@ -172,3 +172,31 @@ or title-deed status — a 25% discount is a lead to investigate, not a valuatio
 חשוב לדעת: הבנצ'מרק מבוסס על מחירי **בקשה** ולא על עסקאות שנסגרו, והסוכן לא רואה
 מצב תחזוקה, קומה, נוף או מצב טאבו. הנחה של 25% היא **כיוון לבדיקה**, לא הערכת
 שווי. הנחות מעל 45% הן בדרך כלל סימן לבעיה (חלק בטאבו, היעדר שטר בעלות) ולא מציאה.
+
+## 3D unit models from the drawing set
+
+`tools/plan3d/` turns the developer's plan sheets (`tools/plan3d/floorplans.pdf`,
+four furnished apartment plans) into an explorable 3D model of each unit:
+
+```bash
+pip install pymupdf pillow numpy scipy scikit-image shapely
+
+python -m tools.plan3d.extract    # PDF -> viz/units.json + floor textures
+python -m tools.plan3d.bundle     # -> viz/index.html, self-contained
+```
+
+The sheets are raster renders rather than vector CAD, so the geometry is
+recovered by colour-segmenting each page and tracing the masks: the uniform grey
+the plans draw walls in, the pale blue strips that mark windows and patio doors,
+the timber decking that marks balconies, and the flat grey fills that mark space
+belonging to a neighbouring unit. Pixels become metres via a per-page scale
+calibrated against the dimensions printed on the sheet; walls extrude to a
+2.70 m storey, parapets to 1.05 m, window heads to 2.15 m.
+
+Two details are worth knowing when reading the output. The plans draw kitchen
+worktops, vanities and sideboards in the same grey as the walls, so anything
+thick but free-standing is modelled at counter height instead of full height,
+and the hairline outlines around beds and baths are discarded. And the areas in
+`viz/units.json` are measured off the trace — they are not the brochure's
+figures, and they disagree with it in places where the printed room dimensions
+are themselves inconsistent with the drawing.

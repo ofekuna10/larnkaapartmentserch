@@ -9,3 +9,6 @@ venv/
 out/
 *.sqlite3
 seen_listings.json
+
+# generated floor textures (inlined into viz/index.html by tools.plan3d.bundle)
+viz/unit*.png

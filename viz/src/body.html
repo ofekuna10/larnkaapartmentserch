@@ -1,0 +1,38 @@
+<div id="app">
+ <aside>
+  <div class="plate">
+   <p class="eyebrow">Traced from drawing set · 4 units</p>
+   <h1>Larnaca Unit Models</h1>
+   <p>Walls, glazing and balconies read straight off the plan sheets and extruded to a 2.70 m storey height.</p>
+  </div>
+  <div class="tabs" role="tablist" aria-label="Unit"></div>
+  <div class="sect">
+   <p class="unit-name" id="uname"></p>
+   <dl class="areas" id="areas"></dl>
+   <h2>Room schedule</h2>
+   <table><tbody id="rooms"></tbody></table>
+   <h2>Reading the model</h2>
+   <div class="legend">
+    <span><i class="sw" style="background:#8a8a86"></i> Wall · 2.70 m</span>
+    <span><i class="sw" style="background:#a9c4d2"></i> Glazing · window 0.90–2.15 m, patio door to 2.40 m</span>
+    <span><i class="sw" style="background:#b0714b"></i> Balcony deck · parapet 1.05 m</span>
+    <span><i class="sw" style="background:#9a9a9a"></i> Not part of the unit</span>
+   </div>
+   <h2>Provenance</h2>
+   <p class="note">Geometry is colour-traced from the raster plan sheets, then scaled by the dimensions printed on each sheet. Openings come from the glazing strips the plans draw; interior doorways are left as gaps. Areas are measured off the trace, not quoted from the brochure.</p>
+  </div>
+ </aside>
+ <main>
+  <canvas id="stage"></canvas>
+  <div class="hud" role="group" aria-label="View">
+   <button data-view="doll" aria-pressed="true">Doll-house</button>
+   <button data-view="plan" aria-pressed="false">Plan</button>
+   <button data-view="walk" aria-pressed="false">Walk</button>
+   <span class="div"></span>
+   <button data-toggle="cut" aria-pressed="false">Cutaway</button>
+   <button data-toggle="furn" aria-pressed="true">Plan overlay</button>
+  </div>
+  <p class="tip" id="tip">Drag to orbit · scroll to zoom</p>
+  <div class="scalebar"><i id="sbar" style="width:80px"></i><span id="slab">5 m</span></div>
+ </main>
+</div>
