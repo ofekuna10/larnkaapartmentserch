@@ -9,6 +9,3 @@ venv/
 out/
 *.sqlite3
 seen_listings.json
-.pytest_cache/
-.ruff_cache/
-.venv-dev/
