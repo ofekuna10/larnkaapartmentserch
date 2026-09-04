@@ -1,0 +1,20 @@
+# Lint configuration for the social_agent_ai project.
+target-version = "py311"
+line-length = 90
+
+[lint]
+select = ["E", "F", "I", "B", "SIM", "RUF", "ISC", "C4", "BLE"]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "B008",    # FastAPI's Depends()/Query() defaults are the framework idiom
+    "RUF012",  # ClassVar annotations are noise on Pydantic/SQLAlchemy models
+]
+
+[lint.per-file-ignores]
+# Test helpers deliberately reach into private state to prove encryption.
+"tests/*" = ["SLF001"]
+# Settings must be importable before the app-module imports in conftest.
+"tests/conftest.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["app", "main"]
